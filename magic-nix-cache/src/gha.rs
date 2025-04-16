@@ -40,7 +40,7 @@ impl GhaCache {
         narinfo_negative_cache: Arc<RwLock<HashSet<String>>>,
     ) -> Result<GhaCache> {
         let cb_metrics = metrics.clone();
-        let builder = opendal::services::Ghac::default();
+        let builder = opendal::services::Ghac::default().version("magic-nix-cache");
         let api = opendal::Operator::new(builder)?.finish();
 
         let (channel_tx, channel_rx) = unbounded_channel();
