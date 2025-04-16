@@ -56,7 +56,7 @@ http-body-util = "0.1"
 hyper = { version = "1.0.0", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1"] }
 xdg = { version = "2.5.2" }
-opendal = { version = "0.53.0", default-features = false, features = ["services-ghac"] }
+opendal = { version = "0.53.0", default-features = false, features = ["executors-tokio","services-ghac"] }
 
 [dependencies.tokio]
 version = "1.44.2"
