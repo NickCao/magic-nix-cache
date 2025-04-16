@@ -62,6 +62,7 @@ impl IntoResponse for Error {
             Self::Api(err) if err.kind() == opendal::ErrorKind::RateLimited => {
                 StatusCode::TOO_MANY_REQUESTS
             }
+            Self::Api(err) if err.kind() == opendal::ErrorKind::NotFound => StatusCode::NOT_FOUND,
             // HACK: HTTP 418 makes Nix throw a visible error but not retry
             Self::Api(_) => StatusCode::IM_A_TEAPOT,
             Self::NotFound => StatusCode::NOT_FOUND,

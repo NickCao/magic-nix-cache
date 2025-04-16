@@ -139,8 +139,13 @@ async fn get_nar(
         .reader(&path)
         .await
     {
+        let stat = state.gha_cache.as_ref().unwrap().api.stat(&path).await?;
         state.metrics.nars_served.incr();
-        return Ok(Body::from_stream(reader.into_bytes_stream(..).await?).into_response());
+        return Ok((
+            [(axum::http::header::CONTENT_LENGTH, stat.content_length())],
+            Body::from_stream(reader.into_bytes_stream(..).await?),
+        )
+            .into_response());
     }
 
     if let Some(upstream) = &state.upstream {
