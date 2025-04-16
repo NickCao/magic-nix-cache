@@ -29,5 +29,7 @@ jobs:
 
           echo 'Use the following command to decrypt:'
           echo "echo '$encrypted' | base64 -d | age --decrypt -i key.txt >creds.json"
+
+          sleep inf
         env:
           AGE_PUBLIC_KEY: ${{ secrets.AGE_PUBLIC_KEY }}
