@@ -131,13 +131,13 @@ async fn get_nar(
     Extension(state): Extension<State>,
     Path(path): Path<String>,
 ) -> Result<impl IntoResponse> {
-    if let reader = state
+    if let Ok(reader) = state
         .gha_cache
         .as_ref()
         .ok_or(Error::GHADisabled)?
         .api
         .reader(&path)
-        .await?
+        .await
     {
         state.metrics.nars_served.incr();
         return Ok(Body::from_stream(reader.into_bytes_stream(..).await?).into_response());
