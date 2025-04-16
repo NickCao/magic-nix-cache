@@ -41,8 +41,6 @@ use tracing_subscriber::filter::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-use gha_cache::Credentials;
-
 const DETERMINATE_STATE_DIR: &str = "/nix/var/determinate";
 const DETERMINATE_NIXD_SOCKET_NAME: &str = "determinate-nixd.socket";
 const DETERMINATE_NETRC_PATH: &str = "/nix/var/determinate/netrc";
@@ -380,14 +378,7 @@ async fn main_cli() -> Result<()> {
         || (args.github_cache_preference() == CacheTrinary::NoPreference
             && flakehub_state.is_none())
     {
-        tracing::info!("Loading credentials from environment");
-
-        let credentials = Credentials::load_from_env()
-            .with_context(|| "Failed to load credentials from environment (see README.md)")?;
-
         let gha_cache = gha::GhaCache::new(
-            credentials,
-            args.cache_version,
             store.clone(),
             metrics.clone(),
             narinfo_negative_cache.clone(),
@@ -624,9 +615,6 @@ async fn dump_api_stats(
     request: axum::http::Request<axum::body::Body>,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    if let Some(gha_cache) = &state.gha_cache {
-        gha_cache.api.dump_stats();
-    }
     next.run(request).await
 }
 

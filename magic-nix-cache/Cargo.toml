@@ -5,8 +5,6 @@ edition = "2021"
 license = "Apache-2.0"
 
 [dependencies]
-gha-cache = { path = "../gha-cache" }
-
 axum = { version = "0.7.5", default-features = false, features = [
 	"json",
 	"tokio",
@@ -32,7 +30,7 @@ serde = { version = "1.0.162", features = ["derive"] }
 serde_json = { version = "1.0.96", default-features = false }
 thiserror = "1.0.40"
 tokio-stream = { version = "0.1.15", default-features = false }
-tokio-util = { version = "0.7.11", features = ["io", "compat"] }
+tokio-util = { version = "0.7.11", features = ["io", "compat"], default-features = false }
 daemonize = "0.5.0"
 is_ci = "1.1.1"
 sha2 = { version = "0.10.6", default-features = false }
@@ -49,7 +47,7 @@ attic-server = { git = "https://github.com/DeterminateSystems/attic", branch = "
 indicatif = "0.17"
 anyhow = "1.0.71"
 tempfile = "3.9"
-uuid = { version = "1.4.0", features = ["serde", "v7", "rand", "std"] }
+uuid = { version = "1.16.0", features = ["serde", "v7", "std"] }
 futures = "0.3"
 async-compression = "0.4"
 tracing-appender = "0.2.3"
@@ -58,6 +56,7 @@ http-body-util = "0.1"
 hyper = { version = "1.0.0", features = ["full"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1"] }
 xdg = { version = "2.5.2" }
+opendal = { version = "0.53.0", default-features = false, features = ["services-ghac"] }
 
 [dependencies.tokio]
 version = "1.44.2"

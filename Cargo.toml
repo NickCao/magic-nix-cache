@@ -1,6 +1,5 @@
 [workspace]
 members = [
-	"gha-cache",
 	"magic-nix-cache",
 ]
 resolver = "2"

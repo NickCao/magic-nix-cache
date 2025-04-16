@@ -1,13 +1,18 @@
 //! Binary Cache API.
 
 use axum::{
+    body::Body,
     extract::{Extension, Path},
-    response::Redirect,
+    response::{IntoResponse, Redirect, Response},
     routing::{get, put},
     Router,
 };
-use futures::StreamExt as _;
-use tokio_util::io::StreamReader;
+use futures::{AsyncWriteExt, StreamExt as _};
+use tokio::io::copy;
+use tokio_util::{
+    compat::{FuturesAsyncWriteCompatExt, TokioAsyncWriteCompatExt},
+    io::StreamReader,
+};
 
 use super::State;
 use crate::error::{Error, Result};
@@ -34,7 +39,7 @@ Priority: 41
 async fn get_narinfo(
     Extension(state): Extension<State>,
     Path(path): Path<String>,
-) -> Result<Redirect> {
+) -> Result<impl IntoResponse> {
     let components: Vec<&str> = path.splitn(2, '.').collect();
 
     if components.len() != 2 {
@@ -60,9 +65,9 @@ async fn get_narinfo(
     }
 
     if let Some(gha_cache) = &state.gha_cache {
-        if let Some(url) = gha_cache.api.get_file_url(&[&key]).await? {
+        if let Ok(content) = gha_cache.api.read(&key).await {
             state.metrics.narinfos_served.incr();
-            return Ok(Redirect::temporary(&url));
+            return Ok(content.to_bytes().into_response());
         }
     }
 
@@ -93,15 +98,24 @@ async fn put_narinfo(
 
     let store_path_hash = components[0].to_string();
     let key = format!("{}.narinfo", store_path_hash);
-    let allocation = gha_cache.api.allocate_file_with_random_suffix(&key).await?;
 
     let body_stream = body.into_data_stream();
-    let stream = StreamReader::new(
+    let mut stream = StreamReader::new(
         body_stream
             .map(|r| r.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))),
     );
 
-    gha_cache.api.upload_file(allocation, stream).await?;
+    let mut writer = gha_cache
+        .api
+        .writer(&key)
+        .await?
+        .into_futures_async_write()
+        .compat_write();
+
+    copy(&mut stream, &mut writer).await?;
+
+    writer.compat_write().close().await?;
+
     state.metrics.narinfos_uploaded.incr();
 
     state
@@ -113,22 +127,25 @@ async fn put_narinfo(
     Ok(())
 }
 
-async fn get_nar(Extension(state): Extension<State>, Path(path): Path<String>) -> Result<Redirect> {
-    if let Some(url) = state
+async fn get_nar(
+    Extension(state): Extension<State>,
+    Path(path): Path<String>,
+) -> Result<impl IntoResponse> {
+    if let reader = state
         .gha_cache
         .as_ref()
         .ok_or(Error::GHADisabled)?
         .api
-        .get_file_url(&[&path])
+        .reader(&path)
         .await?
     {
         state.metrics.nars_served.incr();
-        return Ok(Redirect::temporary(&url));
+        return Ok(Body::from_stream(reader.into_bytes_stream(..).await?).into_response());
     }
 
     if let Some(upstream) = &state.upstream {
         state.metrics.nars_sent_upstream.incr();
-        Ok(Redirect::temporary(&format!("{}/nar/{}", upstream, path)))
+        Ok(Redirect::temporary(&format!("{}/nar/{}", upstream, path)).into_response())
     } else {
         Err(Error::NotFound)
     }
@@ -141,26 +158,31 @@ async fn put_nar(
 ) -> Result<()> {
     let gha_cache = state.gha_cache.as_ref().ok_or(Error::GHADisabled)?;
 
-    let allocation = gha_cache
-        .api
-        .allocate_file_with_random_suffix(&path)
-        .await?;
-
     let body_stream = body.into_data_stream();
-    let stream = StreamReader::new(
+    let mut stream = StreamReader::new(
         body_stream
             .map(|r| r.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))),
     );
 
-    gha_cache.api.upload_file(allocation, stream).await?;
+    let mut writer = gha_cache
+        .api
+        .writer(&path)
+        .await?
+        .into_futures_async_write()
+        .compat_write();
+
+    copy(&mut stream, &mut writer).await?;
+
+    writer.compat_write().close().await?;
+
     state.metrics.nars_uploaded.incr();
 
     Ok(())
 }
 
-fn pull_through(state: &State, path: &str) -> Result<Redirect> {
+fn pull_through(state: &State, path: &str) -> Result<Response> {
     if let Some(upstream) = &state.upstream {
-        Ok(Redirect::temporary(&format!("{}/{}", upstream, path)))
+        Ok(Redirect::temporary(&format!("{}/{}", upstream, path)).into_response())
     } else {
         Err(Error::NotFound)
     }

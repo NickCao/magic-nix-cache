@@ -6,16 +6,20 @@ use async_compression::tokio::bufread::ZstdEncoder;
 use attic::nix_store::{NixStore, StorePath, ValidPathInfo};
 use attic_server::narinfo::{Compression, NarInfo};
 use futures::stream::TryStreamExt;
-use gha_cache::{Api, Credentials};
+use futures::AsyncWriteExt;
+use opendal::Operator;
+use tokio::io::copy;
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     RwLock,
 };
-use tokio_util::compat::FuturesAsyncReadCompatExt;
+use tokio_util::compat::{
+    FuturesAsyncReadCompatExt, FuturesAsyncWriteCompatExt, TokioAsyncWriteCompatExt,
+};
 
 pub struct GhaCache {
     /// The GitHub Actions Cache API.
-    pub api: Arc<Api>,
+    pub api: Arc<Operator>,
 
     /// The future from the completion of the worker.
     worker_result: RwLock<Option<tokio::task::JoinHandle<Result<()>>>>,
@@ -31,25 +35,13 @@ enum Request {
 
 impl GhaCache {
     pub fn new(
-        credentials: Credentials,
-        cache_version: Option<String>,
         store: Arc<NixStore>,
         metrics: Arc<telemetry::TelemetryReport>,
         narinfo_negative_cache: Arc<RwLock<HashSet<String>>>,
     ) -> Result<GhaCache> {
         let cb_metrics = metrics.clone();
-        let mut api = Api::new(
-            credentials,
-            Arc::new(Box::new(move || {
-                cb_metrics
-                    .tripped_429
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
-            })),
-        )?;
-
-        if let Some(cache_version) = &cache_version {
-            api.mutate_version(cache_version.as_bytes());
-        }
+        let builder = opendal::services::Ghac::default();
+        let api = opendal::Operator::new(builder)?.finish();
 
         let (channel_tx, channel_rx) = unbounded_channel();
 
@@ -115,7 +107,7 @@ impl GhaCache {
 }
 
 async fn worker(
-    api: &Api,
+    api: &Operator,
     store: Arc<NixStore>,
     mut channel_rx: UnboundedReceiver<Request>,
     metrics: Arc<telemetry::TelemetryReport>,
@@ -129,10 +121,10 @@ async fn worker(
                 break;
             }
             Request::Upload(path) => {
-                if api.circuit_breaker_tripped() {
-                    tracing::trace!("GitHub Actions gave us a 429, so we're done.",);
-                    continue;
-                }
+                // if api.circuit_breaker_tripped() {
+                //     tracing::trace!("GitHub Actions gave us a 429, so we're done.",);
+                //     continue;
+                // }
 
                 if !done.insert(path.clone()) {
                     continue;
@@ -161,7 +153,7 @@ async fn worker(
 }
 
 async fn upload_path(
-    api: &Api,
+    api: &Operator,
     store: Arc<NixStore>,
     path: &StorePath,
     metrics: Arc<telemetry::TelemetryReport>,
@@ -172,17 +164,25 @@ async fn upload_path(
     // Upload the NAR.
     let nar_path = format!("{}.nar.zstd", path_info.nar_hash.to_base32());
 
-    let nar_allocation = api.allocate_file_with_random_suffix(&nar_path).await?;
-
     let nar_stream = store.nar_from_path(path.clone());
 
     let nar_reader = nar_stream
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))
         .into_async_read();
 
-    let nar_compressor = ZstdEncoder::new(nar_reader.compat());
+    let mut nar_compressor = ZstdEncoder::new(nar_reader.compat());
 
-    let compressed_nar_size = api.upload_file(nar_allocation, nar_compressor).await?;
+    let mut writer = api
+        .writer(&nar_path)
+        .await?
+        .into_futures_async_write()
+        .compat_write();
+
+    let compressed_nar_size = copy(&mut nar_compressor, &mut writer).await?;
+
+    writer.compat_write().close().await?;
+
+    // let compressed_nar_size = api.upload_file(nar_allocation, nar_compressor).await?;
     metrics.nars_uploaded.incr();
 
     tracing::debug!(
@@ -195,16 +195,13 @@ async fn upload_path(
     // Upload the narinfo.
     let narinfo_path = format!("{}.narinfo", path.to_hash().as_str());
 
-    let narinfo_allocation = api.allocate_file_with_random_suffix(&narinfo_path).await?;
-
     let narinfo = path_info_to_nar_info(store.clone(), &path_info, format!("nar/{}", nar_path))
         .to_string()
         .expect("failed to convert path into to nar info");
 
     tracing::debug!("Uploading '{}'", narinfo_path);
 
-    api.upload_file(narinfo_allocation, narinfo.as_bytes())
-        .await?;
+    api.write(&narinfo_path, narinfo).await?;
 
     metrics.narinfos_uploaded.incr();
 

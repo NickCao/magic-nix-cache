@@ -10,8 +10,11 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("IO error: {0}")]
+    IO(#[from] std::io::Error),
+
     #[error("GitHub API error: {0}")]
-    Api(#[from] gha_cache::api::Error),
+    Api(#[from] opendal::Error),
 
     #[error("Not Found")]
     NotFound,
@@ -56,10 +59,9 @@ pub enum Error {
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let code = match &self {
-            Self::Api(gha_cache::api::Error::ApiError {
-                status: StatusCode::TOO_MANY_REQUESTS,
-                ..
-            }) => StatusCode::TOO_MANY_REQUESTS,
+            Self::Api(err) if err.kind() == opendal::ErrorKind::RateLimited => {
+                StatusCode::TOO_MANY_REQUESTS
+            }
             // HACK: HTTP 418 makes Nix throw a visible error but not retry
             Self::Api(_) => StatusCode::IM_A_TEAPOT,
             Self::NotFound => StatusCode::NOT_FOUND,
